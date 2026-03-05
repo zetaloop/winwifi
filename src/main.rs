@@ -48,6 +48,8 @@ const HEADER_COLUMNS: [(SortKey, f64); 6] = [
     (SortKey::Bssid, 0.16),
 ];
 const MIN_COLUMN_WIDTHS: [f64; 6] = [160.0, 84.0, 104.0, 150.0, 160.0, 190.0];
+const RSSI_AT_ONE_METER_DBM: f64 = -40.0;
+const PATH_LOSS_EXPONENT: f64 = 2.4;
 
 fn run() -> AppResult<()> {
     App::new("dev.foxloop.winwifi")?.run_until_event::<MainModel>(())
@@ -496,6 +498,10 @@ impl MainModel {
                     "SIGNAL".to_string(),
                     format!("{}% ({} dBm)", ap.signal_quality, ap.rssi_dbm),
                 ),
+                (
+                    "DIST_EST".to_string(),
+                    format_distance_meters(estimate_distance_from_rssi(ap.rssi_dbm)),
+                ),
             ];
             if let (Some(rx), Some(tx)) = (ap.rx_rate_mbps, ap.tx_rate_mbps) {
                 rows.push(("RX_RATE".to_string(), format!("{:.1} Mbps", rx)));
@@ -692,4 +698,18 @@ fn compute_column_widths(total_width: f64) -> [f64; 6] {
     let used = widths.iter().sum::<f64>();
     widths[5] += total_width - used;
     widths
+}
+
+fn estimate_distance_from_rssi(rssi_dbm: i32) -> f64 {
+    10.0f64.powf((RSSI_AT_ONE_METER_DBM - rssi_dbm as f64) / (10.0 * PATH_LOSS_EXPONENT))
+}
+
+fn format_distance_meters(distance: f64) -> String {
+    if distance < 1.0 {
+        format!("{distance:.2} m (RSSI)")
+    } else if distance < 10.0 {
+        format!("{distance:.1} m (RSSI)")
+    } else {
+        format!("{distance:.0} m (RSSI)")
+    }
 }
