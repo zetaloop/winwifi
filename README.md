@@ -11,6 +11,7 @@ _纯天然代码，爱来自 Codex。_
 - CHAN
 - RATE
 - SIGNAL（百分比与 dBm）
+- DIST_EST（基于 RSSI 的距离估计值）
 
 ## 技术栈
 
@@ -34,7 +35,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## 位置权限说明
 
-Windows 对 WiFi BSSID 访问与位置权限联动。  
+Windows 对 WiFi BSSID 访问与位置权限联动。
 若位置权限未允许，`WlanGetAvailableNetworkList` / `WlanGetNetworkBssList` / `WlanScan` 可能返回 `ERROR_ACCESS_DENIED`。应用内会提示并提供一键打开系统设置入口。
 
-## MIT
+### MIT
