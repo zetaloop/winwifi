@@ -1,8 +1,11 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod error;
 mod wifi;
 
 use std::{
     collections::{HashMap, VecDeque},
+    io::Write as _,
     process::Command,
     time::Duration,
 };
@@ -21,8 +24,15 @@ use winio::prelude::*;
 
 const HISTORY_CAPACITY: usize = 180;
 
-fn main() -> AppResult<()> {
+fn run() -> AppResult<()> {
     App::new("dev.foxloop.winwifi")?.run_until_event::<MainModel>(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        let _ = writeln!(std::io::stderr(), "{err}");
+        std::process::exit(1);
+    }
 }
 
 struct MainModel {
