@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod ap_detail;
 mod ap_table;
 mod error;
 mod wifi;
@@ -11,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use ap_detail::{ApDetailCard, DetailViewModel};
 use ap_table::{ApTable, ApTableEvent, ApTableRow};
 use compio::{runtime::spawn, time::interval};
 use error::{AppError, AppResult};
@@ -70,7 +72,7 @@ struct MainModel {
     header_ssid: Child<Button>,
     header_bssid: Child<Button>,
     ap_table: Child<ApTable>,
-    detail_box: Child<TextBox>,
+    detail_card: Child<ApDetailCard>,
     chart: Child<Canvas>,
     poller: WifiPoller,
     interface_items: Vec<String>,
@@ -131,10 +133,7 @@ impl Component for MainModel {
             header_ssid: Button = (&window),
             header_bssid: Button = (&window),
             ap_table: ApTable = (&window),
-            detail_box: TextBox = (&window) => {
-                readonly: true,
-                text: "等待首帧数据…",
-            },
+            detail_card: ApDetailCard = (&window),
             chart: Canvas = (&window),
         }
 
@@ -163,7 +162,7 @@ impl Component for MainModel {
             header_ssid,
             header_bssid,
             ap_table,
-            detail_box,
+            detail_card,
             chart,
             poller,
             interface_items: Vec::new(),
@@ -214,7 +213,7 @@ impl Component for MainModel {
             self.ap_table => {
                 ApTableEvent::Select => MainMessage::AccessPointSelected,
             },
-            self.detail_box => {},
+            self.detail_card => {},
             self.chart => {},
         }
     }
@@ -232,7 +231,7 @@ impl Component for MainModel {
             self.header_ssid,
             self.header_bssid,
             self.ap_table,
-            self.detail_box,
+            self.detail_card,
             self.chart
         )
     }
@@ -340,7 +339,7 @@ impl Component for MainModel {
 
         let right_x = left_width + margin;
         let right_w = (csize.width - right_x - margin).max(180.0);
-        self.detail_box.set_rect(Rect::new(
+        self.detail_card.set_rect(Rect::new(
             Point::new(right_x, top_height + margin),
             Size::new(
                 right_w,
@@ -383,8 +382,8 @@ impl MainModel {
             }
             Err(err) => {
                 self.status_label.set_text(format!("扫描失败: {err}"))?;
-                self.detail_box
-                    .set_text("扫描器遇到错误，请确认 WLAN 服务与无线网卡状态。")?;
+                self.detail_card
+                    .set_message("扫描器遇到错误，请确认 WLAN 服务与无线网卡状态。")?;
             }
         }
         Ok(())
@@ -474,7 +473,7 @@ impl MainModel {
             } else {
                 "当前没有可展示的 AP 数据。".to_string()
             };
-            self.detail_box.set_text(text)?;
+            self.detail_card.set_message(text)?;
             return Ok(());
         }
 
@@ -483,7 +482,44 @@ impl MainModel {
             .and_then(|bssid| self.aps.iter().find(|ap| ap.bssid == bssid))
             .or_else(|| self.aps.first());
         if let Some(ap) = selected {
-            self.detail_box.set_text(format_ap_detail(ap))?;
+            let mut rows = vec![
+                ("BSSID".to_string(), ap.bssid_text.clone()),
+                ("SSID".to_string(), ap.ssid.clone()),
+                ("MODE".to_string(), ap.mode.clone()),
+                ("CHAN".to_string(), ap.channel.to_string()),
+                (
+                    "CENTER_FREQ".to_string(),
+                    format!("{} kHz", ap.center_freq_khz),
+                ),
+                ("RATE".to_string(), format!("{:.1} Mbps", ap.rate_mbps)),
+                (
+                    "SIGNAL".to_string(),
+                    format!("{}% ({} dBm)", ap.signal_quality, ap.rssi_dbm),
+                ),
+            ];
+            if let (Some(rx), Some(tx)) = (ap.rx_rate_mbps, ap.tx_rate_mbps) {
+                rows.push(("RX_RATE".to_string(), format!("{:.1} Mbps", rx)));
+                rows.push(("TX_RATE".to_string(), format!("{:.1} Mbps", tx)));
+            }
+            rows.push((
+                "STATE".to_string(),
+                if ap.connected {
+                    "Connected"
+                } else {
+                    "Detected"
+                }
+                .to_string(),
+            ));
+            self.detail_card.set_model(DetailViewModel {
+                title: if ap.ssid.is_empty() {
+                    "Hidden SSID".to_string()
+                } else {
+                    ap.ssid.clone()
+                },
+                subtitle: ap.bssid_text.clone(),
+                rows,
+                message: None,
+            })?;
         }
         Ok(())
     }
@@ -656,24 +692,4 @@ fn compute_column_widths(total_width: f64) -> [f64; 6] {
     let used = widths.iter().sum::<f64>();
     widths[5] += total_width - used;
     widths
-}
-
-fn format_ap_detail(ap: &AccessPointRecord) -> String {
-    let mut lines = vec![
-        format!("BSSID: {}", ap.bssid_text),
-        format!("SSID: {}", ap.ssid),
-        format!("MODE: {}", ap.mode),
-        format!("CHAN: {}", ap.channel),
-        format!("CENTER_FREQ: {} kHz", ap.center_freq_khz),
-        format!("RATE: {:.1} Mbps", ap.rate_mbps),
-        format!("SIGNAL: {}% ({} dBm)", ap.signal_quality, ap.rssi_dbm),
-    ];
-    if let (Some(rx), Some(tx)) = (ap.rx_rate_mbps, ap.tx_rate_mbps) {
-        lines.push(format!("RX_RATE: {:.1} Mbps", rx));
-        lines.push(format!("TX_RATE: {:.1} Mbps", tx));
-    }
-    if ap.connected {
-        lines.push("STATE: Connected".to_string());
-    }
-    lines.join("\n")
 }
