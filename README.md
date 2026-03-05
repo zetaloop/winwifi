@@ -1,6 +1,8 @@
+_纯天然代码，爱来自 Codex。_
+
 # WinWiFi
 
-基于 Rust + winio WinUI3 的 Windows WiFi 实时监测工具。  
+基于 Rust + winio WinUI3 的 Windows WiFi 实时监测工具。
 应用会持续扫描并可视化本机无线网卡可见的 AP 信息，重点字段包含：
 
 - BSSID
@@ -20,7 +22,7 @@
 ## 运行
 
 ```bash
-cargo run
+cargo run --release
 ```
 
 ## 静态检查
@@ -35,3 +37,4 @@ cargo clippy --all-targets -- -D warnings
 Windows 对 WiFi BSSID 访问与位置权限联动。  
 若位置权限未允许，`WlanGetAvailableNetworkList` / `WlanGetNetworkBssList` / `WlanScan` 可能返回 `ERROR_ACCESS_DENIED`。应用内会提示并提供一键打开系统设置入口。
 
+## MIT
