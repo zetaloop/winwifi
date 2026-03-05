@@ -24,8 +24,6 @@ use wifi::{
 use winio::prelude::*;
 
 const HISTORY_CAPACITY: usize = 180;
-const TABLE_HEADER_HEIGHT: f64 = 30.0;
-const TABLE_ROW_HEIGHT: f64 = 24.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SortKey {
@@ -37,21 +35,14 @@ enum SortKey {
     Bssid,
 }
 
-const TABLE_COLUMNS: [(&str, SortKey, f64); 6] = [
-    ("SIGNAL", SortKey::Signal, 0.13),
-    ("CHAN", SortKey::Channel, 0.10),
-    ("RATE", SortKey::Rate, 0.11),
-    ("MODE", SortKey::Mode, 0.18),
-    ("SSID", SortKey::Ssid, 0.25),
-    ("BSSID", SortKey::Bssid, 0.23),
+const HEADER_COLUMNS: [(SortKey, f64); 6] = [
+    (SortKey::Signal, 0.13),
+    (SortKey::Channel, 0.10),
+    (SortKey::Rate, 0.11),
+    (SortKey::Mode, 0.18),
+    (SortKey::Ssid, 0.25),
+    (SortKey::Bssid, 0.23),
 ];
-
-struct ColumnLayout {
-    title: &'static str,
-    key: SortKey,
-    x: f64,
-    width: f64,
-}
 
 fn run() -> AppResult<()> {
     App::new("dev.foxloop.winwifi")?.run_until_event::<MainModel>(())
@@ -69,7 +60,13 @@ struct MainModel {
     interface_combo: Child<ComboBox>,
     location_button: Child<Button>,
     status_label: Child<Label>,
-    ap_table: Child<Canvas>,
+    header_signal: Child<Button>,
+    header_chan: Child<Button>,
+    header_rate: Child<Button>,
+    header_mode: Child<Button>,
+    header_ssid: Child<Button>,
+    header_bssid: Child<Button>,
+    ap_list: Child<ListBox>,
     detail_box: Child<TextBox>,
     chart: Child<Canvas>,
     poller: WifiPoller,
@@ -79,8 +76,6 @@ struct MainModel {
     selected_bssid: Option<[u8; 6]>,
     histories: HashMap<String, VecDeque<i32>>,
     permission_denied: bool,
-    table_cursor: Point,
-    table_scroll: usize,
     sort_key: SortKey,
     sort_desc: bool,
 }
@@ -92,9 +87,8 @@ enum MainMessage {
     Redraw,
     Tick,
     InterfaceSelected,
-    TableMouseMove(Point),
-    TableMouseDown(MouseButton),
-    TableWheel(Vector),
+    AccessPointSelected,
+    SortBy(SortKey),
     OpenLocationSettings,
 }
 
@@ -126,7 +120,13 @@ impl Component for MainModel {
             status_label: Label = (&window) => {
                 text: "正在初始化 WiFi 扫描器…",
             },
-            ap_table: Canvas = (&window),
+            header_signal: Button = (&window),
+            header_chan: Button = (&window),
+            header_rate: Button = (&window),
+            header_mode: Button = (&window),
+            header_ssid: Button = (&window),
+            header_bssid: Button = (&window),
+            ap_list: ListBox = (&window),
             detail_box: TextBox = (&window) => {
                 readonly: true,
                 text: "等待首帧数据…",
@@ -147,12 +147,18 @@ impl Component for MainModel {
         sender.post(MainMessage::Tick);
         window.show()?;
 
-        Ok(Self {
+        let mut model = Self {
             window,
             interface_combo,
             location_button,
             status_label,
-            ap_table,
+            header_signal,
+            header_chan,
+            header_rate,
+            header_mode,
+            header_ssid,
+            header_bssid,
+            ap_list,
             detail_box,
             chart,
             poller,
@@ -162,11 +168,11 @@ impl Component for MainModel {
             selected_bssid: None,
             histories: HashMap::new(),
             permission_denied: false,
-            table_cursor: Point::zero(),
-            table_scroll: 0,
             sort_key: SortKey::Signal,
             sort_desc: true,
-        })
+        };
+        model.update_sort_headers()?;
+        Ok(model)
     }
 
     async fn start(&mut self, sender: &ComponentSender<Self>) -> ! {
@@ -182,10 +188,26 @@ impl Component for MainModel {
             self.location_button => {
                 ButtonEvent::Click => MainMessage::OpenLocationSettings,
             },
-            self.ap_table => {
-                CanvasEvent::MouseMove(p) => MainMessage::TableMouseMove(p),
-                CanvasEvent::MouseDown(btn) => MainMessage::TableMouseDown(btn),
-                CanvasEvent::MouseWheel(w) => MainMessage::TableWheel(w),
+            self.header_signal => {
+                ButtonEvent::Click => MainMessage::SortBy(SortKey::Signal),
+            },
+            self.header_chan => {
+                ButtonEvent::Click => MainMessage::SortBy(SortKey::Channel),
+            },
+            self.header_rate => {
+                ButtonEvent::Click => MainMessage::SortBy(SortKey::Rate),
+            },
+            self.header_mode => {
+                ButtonEvent::Click => MainMessage::SortBy(SortKey::Mode),
+            },
+            self.header_ssid => {
+                ButtonEvent::Click => MainMessage::SortBy(SortKey::Ssid),
+            },
+            self.header_bssid => {
+                ButtonEvent::Click => MainMessage::SortBy(SortKey::Bssid),
+            },
+            self.ap_list => {
+                ListBoxEvent::Select => MainMessage::AccessPointSelected,
             },
             self.detail_box => {},
             self.chart => {},
@@ -198,7 +220,13 @@ impl Component for MainModel {
             self.interface_combo,
             self.location_button,
             self.status_label,
-            self.ap_table,
+            self.header_signal,
+            self.header_chan,
+            self.header_rate,
+            self.header_mode,
+            self.header_ssid,
+            self.header_bssid,
+            self.ap_list,
             self.detail_box,
             self.chart
         )
@@ -225,18 +253,27 @@ impl Component for MainModel {
                 sender.post(MainMessage::Tick);
                 Ok(false)
             }
-            MainMessage::TableMouseMove(p) => {
-                self.table_cursor = p;
-                Ok(false)
-            }
-            MainMessage::TableMouseDown(button) => {
-                if button == MouseButton::Left && self.handle_table_left_click()? {
+            MainMessage::AccessPointSelected => {
+                if let Some(index) = self.current_selected_ap_index()? {
+                    self.selected_bssid = self.aps.get(index).map(|v| v.bssid);
                     self.update_detail_text()?;
                     return Ok(true);
                 }
                 Ok(false)
             }
-            MainMessage::TableWheel(w) => Ok(self.handle_table_wheel(w.y)?),
+            MainMessage::SortBy(key) => {
+                if self.sort_key == key {
+                    self.sort_desc = !self.sort_desc;
+                } else {
+                    self.sort_key = key;
+                    self.sort_desc = matches!(key, SortKey::Signal | SortKey::Rate);
+                }
+                self.sort_aps();
+                self.update_sort_headers()?;
+                self.refresh_list_view()?;
+                self.update_detail_text()?;
+                Ok(true)
+            }
             MainMessage::OpenLocationSettings => {
                 self.open_location_settings()?;
                 Ok(false)
@@ -248,6 +285,7 @@ impl Component for MainModel {
         let csize = self.window.client_size()?;
         let top_height = 40.0;
         let left_width = 560.0;
+        let header_height = 30.0;
         let chart_height = 280.0;
         let margin = 10.0;
 
@@ -264,12 +302,27 @@ impl Component for MainModel {
             Size::new((csize.width - 540.0).max(100.0), top_height - margin),
         ))?;
 
-        self.ap_table.set_rect(Rect::new(
-            Point::new(margin, top_height + margin),
-            Size::new(
-                left_width - margin,
-                (csize.height - top_height - 2.0 * margin).max(120.0),
-            ),
+        let left_x = margin;
+        let left_y = top_height + margin;
+        let left_w = left_width - margin;
+        let list_h = (csize.height - top_height - 2.0 * margin - header_height).max(120.0);
+
+        let mut col_x = left_x;
+        for ((_, ratio), header) in HEADER_COLUMNS.iter().zip(self.header_buttons_mut()) {
+            let mut col_w = left_w * ratio;
+            if col_x + col_w > left_x + left_w {
+                col_w = left_x + left_w - col_x;
+            }
+            header.set_rect(Rect::new(
+                Point::new(col_x, left_y),
+                Size::new(col_w, header_height),
+            ))?;
+            col_x += col_w;
+        }
+
+        self.ap_list.set_rect(Rect::new(
+            Point::new(left_x, left_y + header_height),
+            Size::new(left_w, list_h),
         ))?;
 
         let right_x = left_width + margin;
@@ -289,8 +342,6 @@ impl Component for MainModel {
             Size::new(right_w, (chart_height - margin).max(140.0)),
         ))?;
 
-        self.normalize_table_scroll()?;
-        self.draw_table()?;
         self.draw_chart()?;
         Ok(())
     }
@@ -301,6 +352,17 @@ impl Component for MainModel {
 }
 
 impl MainModel {
+    fn header_buttons_mut(&mut self) -> [&mut Child<Button>; 6] {
+        [
+            &mut self.header_signal,
+            &mut self.header_chan,
+            &mut self.header_rate,
+            &mut self.header_mode,
+            &mut self.header_ssid,
+            &mut self.header_bssid,
+        ]
+    }
+
     fn refresh_snapshot(&mut self) -> AppResult<()> {
         match self.poller.collect(self.selected_interface) {
             Ok(snapshot) => {
@@ -356,9 +418,19 @@ impl MainModel {
                 .map(|ap| ap.bssid);
         }
 
-        self.normalize_table_scroll()?;
+        self.refresh_list_view()?;
         self.status_label.set_text(snapshot.status)?;
         self.update_detail_text()?;
+        Ok(())
+    }
+
+    fn refresh_list_view(&mut self) -> AppResult<()> {
+        self.ap_list.set_items(self.aps.iter().map(format_ap_row))?;
+        if let Some(selected) = self.selected_bssid
+            && let Some(index) = self.aps.iter().position(|ap| ap.bssid == selected)
+        {
+            self.ap_list.set_selected(index, true)?;
+        }
         Ok(())
     }
 
@@ -384,6 +456,15 @@ impl MainModel {
         Ok(())
     }
 
+    fn current_selected_ap_index(&self) -> AppResult<Option<usize>> {
+        for index in 0..self.aps.len() {
+            if self.ap_list.is_selected(index)? {
+                return Ok(Some(index));
+            }
+        }
+        Ok(None)
+    }
+
     fn sort_aps(&mut self) {
         self.aps.sort_by(|a, b| {
             let ordering = match self.sort_key {
@@ -403,231 +484,43 @@ impl MainModel {
         });
     }
 
-    fn table_column_layout(&self, width: f64) -> Vec<ColumnLayout> {
-        let mut x = 0.0;
-        let mut result = Vec::with_capacity(TABLE_COLUMNS.len());
-        for (index, (title, key, ratio)) in TABLE_COLUMNS.iter().enumerate() {
-            let mut column_width = width * ratio;
-            if index + 1 == TABLE_COLUMNS.len() {
-                column_width = (width - x).max(20.0);
-            }
-            result.push(ColumnLayout {
-                title,
-                key: *key,
-                x,
-                width: column_width.max(20.0),
-            });
-            x += column_width;
-        }
-        result
-    }
-
-    fn table_visible_rows(&self, table_height: f64) -> usize {
-        let rows_height = (table_height - TABLE_HEADER_HEIGHT).max(TABLE_ROW_HEIGHT);
-        (rows_height / TABLE_ROW_HEIGHT).floor().max(1.0) as usize
-    }
-
-    fn normalize_table_scroll(&mut self) -> AppResult<()> {
-        let size = self.ap_table.size().unwrap_or(Size::new(560.0, 400.0));
-        let visible_rows = self.table_visible_rows(size.height);
-        let max_scroll = self.aps.len().saturating_sub(visible_rows);
-        self.table_scroll = self.table_scroll.min(max_scroll);
-        Ok(())
-    }
-
-    fn ensure_selected_visible(&mut self) -> AppResult<()> {
-        let Some(selected) = self.selected_bssid else {
-            return Ok(());
-        };
-        let Some(index) = self.aps.iter().position(|ap| ap.bssid == selected) else {
-            return Ok(());
-        };
-        let size = self.ap_table.size().unwrap_or(Size::new(560.0, 400.0));
-        let visible_rows = self.table_visible_rows(size.height);
-        if index < self.table_scroll {
-            self.table_scroll = index;
-        } else if index >= self.table_scroll + visible_rows {
-            self.table_scroll = index.saturating_sub(visible_rows.saturating_sub(1));
-        }
-        Ok(())
-    }
-
-    fn handle_table_wheel(&mut self, delta_y: f64) -> AppResult<bool> {
-        if self.aps.is_empty() || delta_y.abs() < f64::EPSILON {
-            return Ok(false);
-        }
-        let size = self.ap_table.size()?;
-        let visible_rows = self.table_visible_rows(size.height);
-        let max_scroll = self.aps.len().saturating_sub(visible_rows);
-        if max_scroll == 0 {
-            return Ok(false);
-        }
-        let step = ((delta_y.abs() / 80.0).round() as usize).max(1);
-        let old_scroll = self.table_scroll;
-        if delta_y > 0.0 {
-            self.table_scroll = self.table_scroll.saturating_sub(step);
-        } else {
-            self.table_scroll = (self.table_scroll + step).min(max_scroll);
-        }
-        Ok(self.table_scroll != old_scroll)
-    }
-
-    fn handle_table_left_click(&mut self) -> AppResult<bool> {
-        let size = self.ap_table.size()?;
-        let p = self.table_cursor;
-        if p.x < 0.0 || p.y < 0.0 || p.x > size.width || p.y > size.height {
-            return Ok(false);
-        }
-
-        let columns = self.table_column_layout(size.width);
-        if p.y <= TABLE_HEADER_HEIGHT {
-            for column in &columns {
-                if p.x >= column.x && p.x < column.x + column.width {
-                    if self.sort_key == column.key {
-                        self.sort_desc = !self.sort_desc;
-                    } else {
-                        self.sort_key = column.key;
-                        self.sort_desc = matches!(column.key, SortKey::Signal | SortKey::Rate);
-                    }
-                    self.sort_aps();
-                    self.ensure_selected_visible()?;
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
-        }
-
-        let row = ((p.y - TABLE_HEADER_HEIGHT) / TABLE_ROW_HEIGHT).floor() as usize;
-        let index = self.table_scroll + row;
-        if let Some(ap) = self.aps.get(index) {
-            self.selected_bssid = Some(ap.bssid);
-            self.ensure_selected_visible()?;
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    fn draw_table(&mut self) -> AppResult<()> {
-        let size = self.ap_table.size()?;
-        let columns = self.table_column_layout(size.width);
-        let visible_rows = self.table_visible_rows(size.height);
-        let mut ctx = self.ap_table.context()?;
-        let is_dark = ColorTheme::current()? == ColorTheme::Dark;
-
-        let background = SolidColorBrush::new(if is_dark {
-            Color::new(28, 28, 28, 255)
-        } else {
-            Color::new(250, 250, 250, 255)
-        });
-        let header_background = SolidColorBrush::new(if is_dark {
-            Color::new(45, 45, 45, 255)
-        } else {
-            Color::new(235, 235, 235, 255)
-        });
-        let selected_background = SolidColorBrush::new(if is_dark {
-            Color::new(58, 85, 130, 255)
-        } else {
-            Color::new(208, 225, 255, 255)
-        });
-        let text_brush = SolidColorBrush::new(if is_dark {
-            Color::new(240, 240, 240, 255)
-        } else {
-            Color::new(30, 30, 30, 255)
-        });
-        let pen = BrushPen::new(&text_brush, if is_dark { 0.6 } else { 0.4 });
-        let header_font = DrawingFontBuilder::new()
-            .family("Segoe UI")
-            .size(13.0)
-            .halign(HAlign::Left)
-            .valign(VAlign::Center)
-            .build();
-        let row_font = DrawingFontBuilder::new()
-            .family("Consolas")
-            .size(12.0)
-            .halign(HAlign::Left)
-            .valign(VAlign::Center)
-            .build();
-
-        ctx.fill_rect(&background, Rect::new(Point::zero(), size))?;
-        ctx.fill_rect(
-            &header_background,
-            Rect::new(Point::zero(), Size::new(size.width, TABLE_HEADER_HEIGHT)),
-        )?;
-        ctx.draw_rect(&pen, Rect::new(Point::zero(), size))?;
-
-        for column in &columns {
-            let arrow = if self.sort_key == column.key {
-                if self.sort_desc { " ↓" } else { " ↑" }
-            } else {
-                ""
-            };
-            let title = format!("{}{}", column.title, arrow);
-            let text = fit_text(&ctx, header_font.clone(), &title, column.width - 10.0)?;
-            ctx.draw_str(
-                &text_brush,
-                header_font.clone(),
-                Point::new(column.x + 5.0, TABLE_HEADER_HEIGHT / 2.0),
-                text,
-            )?;
-            if column.x > 0.0 {
-                ctx.draw_line(
-                    &pen,
-                    Point::new(column.x, 0.0),
-                    Point::new(column.x, size.height),
-                )?;
-            }
-        }
-        ctx.draw_line(
-            &pen,
-            Point::new(0.0, TABLE_HEADER_HEIGHT),
-            Point::new(size.width, TABLE_HEADER_HEIGHT),
-        )?;
-
-        for row in 0..visible_rows {
-            let index = self.table_scroll + row;
-            if index >= self.aps.len() {
-                break;
-            }
-            let ap = &self.aps[index];
-            let y = TABLE_HEADER_HEIGHT + row as f64 * TABLE_ROW_HEIGHT;
-            if self.selected_bssid == Some(ap.bssid) {
-                ctx.fill_rect(
-                    &selected_background,
-                    Rect::new(Point::new(0.0, y), Size::new(size.width, TABLE_ROW_HEIGHT)),
-                )?;
-            }
-
-            for column in &columns {
-                let raw = match column.key {
-                    SortKey::Signal => format!("{}% / {}dBm", ap.signal_quality, ap.rssi_dbm),
-                    SortKey::Channel => ap.channel.to_string(),
-                    SortKey::Rate => format!("{:.1}M", ap.rate_mbps),
-                    SortKey::Mode => ap.mode.clone(),
-                    SortKey::Ssid => {
-                        if ap.connected {
-                            format!("{} [C]", ap.ssid)
-                        } else {
-                            ap.ssid.clone()
-                        }
-                    }
-                    SortKey::Bssid => ap.bssid_text.clone(),
-                };
-                let cell = fit_text(&ctx, row_font.clone(), &raw, column.width - 8.0)?;
-                ctx.draw_str(
-                    &text_brush,
-                    row_font.clone(),
-                    Point::new(column.x + 4.0, y + TABLE_ROW_HEIGHT / 2.0),
-                    cell,
-                )?;
-            }
-
-            ctx.draw_line(
-                &pen,
-                Point::new(0.0, y + TABLE_ROW_HEIGHT),
-                Point::new(size.width, y + TABLE_ROW_HEIGHT),
-            )?;
-        }
-
+    fn update_sort_headers(&mut self) -> AppResult<()> {
+        self.header_signal.set_text(header_text(
+            "SIGNAL",
+            self.sort_key,
+            self.sort_desc,
+            SortKey::Signal,
+        ))?;
+        self.header_chan.set_text(header_text(
+            "CHAN",
+            self.sort_key,
+            self.sort_desc,
+            SortKey::Channel,
+        ))?;
+        self.header_rate.set_text(header_text(
+            "RATE",
+            self.sort_key,
+            self.sort_desc,
+            SortKey::Rate,
+        ))?;
+        self.header_mode.set_text(header_text(
+            "MODE",
+            self.sort_key,
+            self.sort_desc,
+            SortKey::Mode,
+        ))?;
+        self.header_ssid.set_text(header_text(
+            "SSID",
+            self.sort_key,
+            self.sort_desc,
+            SortKey::Ssid,
+        ))?;
+        self.header_bssid.set_text(header_text(
+            "BSSID",
+            self.sort_key,
+            self.sort_desc,
+            SortKey::Bssid,
+        ))?;
         Ok(())
     }
 
@@ -706,33 +599,47 @@ impl MainModel {
     }
 }
 
-fn fit_text(
-    ctx: &DrawingContext<'_>,
-    font: DrawingFont,
-    text: &str,
-    max_width: f64,
-) -> AppResult<String> {
-    if max_width <= 6.0 {
-        return Ok(String::new());
+fn header_text(base: &str, key: SortKey, desc: bool, col: SortKey) -> String {
+    if key != col {
+        return base.to_string();
     }
-    let size = ctx.measure_str(font.clone(), text)?;
-    if size.width <= max_width {
-        return Ok(text.to_string());
+    if desc {
+        format!("{base} ↓")
+    } else {
+        format!("{base} ↑")
     }
-    let ellipsis = "…";
-    if ctx.measure_str(font.clone(), ellipsis)?.width > max_width {
-        return Ok(String::new());
-    }
+}
 
-    let mut chars = text.chars().collect::<Vec<_>>();
-    while !chars.is_empty() {
-        chars.pop();
-        let candidate = format!("{}{}", chars.iter().collect::<String>(), ellipsis);
-        if ctx.measure_str(font.clone(), &candidate)?.width <= max_width {
-            return Ok(candidate);
-        }
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
     }
-    Ok(ellipsis.to_string())
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+    let mut out = String::new();
+    for ch in input.chars().take(max_chars - 1) {
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+fn format_ap_row(ap: &AccessPointRecord) -> String {
+    let mode = truncate_chars(&ap.mode, 10);
+    let ssid = truncate_chars(&ap.ssid, 18);
+    let bssid = truncate_chars(&ap.bssid_text, 17);
+    format!(
+        "{}% {:>4}dBm | CH {:>3} | {:>6.1}M | {:<10} | {:<18} | {}{}",
+        ap.signal_quality,
+        ap.rssi_dbm,
+        ap.channel,
+        ap.rate_mbps,
+        mode,
+        ssid,
+        bssid,
+        if ap.connected { " [C]" } else { "" }
+    )
 }
 
 fn format_ap_detail(ap: &AccessPointRecord) -> String {
