@@ -1704,7 +1704,11 @@ version = "0.1.0"
 dependencies = [
  "compio",
  "plotters",
+ "send_wrapper",
  "thiserror",
+ "windows-core",
  "windows-sys 0.61.2",
  "winio",
+ "winio-callback",
+ "winio-winui3",
 ]

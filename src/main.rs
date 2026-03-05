@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod ap_table;
 mod error;
 mod wifi;
 
@@ -10,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use ap_table::{ApTable, ApTableEvent, ApTableRow};
 use compio::{runtime::spawn, time::interval};
 use error::{AppError, AppResult};
 use plotters::prelude::{
@@ -66,7 +68,7 @@ struct MainModel {
     header_mode: Child<Button>,
     header_ssid: Child<Button>,
     header_bssid: Child<Button>,
-    ap_list: Child<ListBox>,
+    ap_table: Child<ApTable>,
     detail_box: Child<TextBox>,
     chart: Child<Canvas>,
     poller: WifiPoller,
@@ -78,6 +80,7 @@ struct MainModel {
     permission_denied: bool,
     sort_key: SortKey,
     sort_desc: bool,
+    table_column_widths: [f64; 6],
 }
 
 #[derive(Debug)]
@@ -126,7 +129,7 @@ impl Component for MainModel {
             header_mode: Button = (&window),
             header_ssid: Button = (&window),
             header_bssid: Button = (&window),
-            ap_list: ListBox = (&window),
+            ap_table: ApTable = (&window),
             detail_box: TextBox = (&window) => {
                 readonly: true,
                 text: "等待首帧数据…",
@@ -158,7 +161,7 @@ impl Component for MainModel {
             header_mode,
             header_ssid,
             header_bssid,
-            ap_list,
+            ap_table,
             detail_box,
             chart,
             poller,
@@ -170,6 +173,7 @@ impl Component for MainModel {
             permission_denied: false,
             sort_key: SortKey::Signal,
             sort_desc: true,
+            table_column_widths: [92.0; 6],
         };
         model.update_sort_headers()?;
         Ok(model)
@@ -206,8 +210,8 @@ impl Component for MainModel {
             self.header_bssid => {
                 ButtonEvent::Click => MainMessage::SortBy(SortKey::Bssid),
             },
-            self.ap_list => {
-                ListBoxEvent::Select => MainMessage::AccessPointSelected,
+            self.ap_table => {
+                ApTableEvent::Select => MainMessage::AccessPointSelected,
             },
             self.detail_box => {},
             self.chart => {},
@@ -226,7 +230,7 @@ impl Component for MainModel {
             self.header_mode,
             self.header_ssid,
             self.header_bssid,
-            self.ap_list,
+            self.ap_table,
             self.detail_box,
             self.chart
         )
@@ -308,11 +312,17 @@ impl Component for MainModel {
         let list_h = (csize.height - top_height - 2.0 * margin - header_height).max(120.0);
 
         let mut col_x = left_x;
-        for ((_, ratio), header) in HEADER_COLUMNS.iter().zip(self.header_buttons_mut()) {
+        let mut column_widths = [0.0; 6];
+        for (idx, ((_, ratio), header)) in HEADER_COLUMNS
+            .iter()
+            .zip(self.header_buttons_mut())
+            .enumerate()
+        {
             let mut col_w = left_w * ratio;
             if col_x + col_w > left_x + left_w {
                 col_w = left_x + left_w - col_x;
             }
+            column_widths[idx] = col_w;
             header.set_rect(Rect::new(
                 Point::new(col_x, left_y),
                 Size::new(col_w, header_height),
@@ -320,10 +330,20 @@ impl Component for MainModel {
             col_x += col_w;
         }
 
-        self.ap_list.set_rect(Rect::new(
+        self.ap_table.set_rect(Rect::new(
             Point::new(left_x, left_y + header_height),
             Size::new(left_w, list_h),
         ))?;
+
+        let widths_changed = self
+            .table_column_widths
+            .iter()
+            .zip(column_widths.iter())
+            .any(|(prev, next)| (prev - next).abs() > 0.5);
+        if widths_changed {
+            self.table_column_widths = column_widths;
+            self.refresh_list_view()?;
+        }
 
         let right_x = left_width + margin;
         let right_w = (csize.width - right_x - margin).max(180.0);
@@ -425,11 +445,30 @@ impl MainModel {
     }
 
     fn refresh_list_view(&mut self) -> AppResult<()> {
-        self.ap_list.set_items(self.aps.iter().map(format_ap_row))?;
+        let rows = self
+            .aps
+            .iter()
+            .map(|ap| ApTableRow {
+                signal: format!("{}% ({} dBm)", ap.signal_quality, ap.rssi_dbm),
+                channel: format!("CH {}", ap.channel),
+                rate: format!("{:.1} Mbps", ap.rate_mbps),
+                mode: ap.mode.clone(),
+                ssid: ap.ssid.clone(),
+                bssid: if ap.connected {
+                    format!("{} [C]", ap.bssid_text)
+                } else {
+                    ap.bssid_text.clone()
+                },
+            })
+            .collect::<Vec<_>>();
+        self.ap_table.set_rows(&rows, self.table_column_widths)?;
+
         if let Some(selected) = self.selected_bssid
             && let Some(index) = self.aps.iter().position(|ap| ap.bssid == selected)
         {
-            self.ap_list.set_selected(index, true)?;
+            self.ap_table.set_selected_index(Some(index))?;
+        } else {
+            self.ap_table.set_selected_index(None)?;
         }
         Ok(())
     }
@@ -457,12 +496,7 @@ impl MainModel {
     }
 
     fn current_selected_ap_index(&self) -> AppResult<Option<usize>> {
-        for index in 0..self.aps.len() {
-            if self.ap_list.is_selected(index)? {
-                return Ok(Some(index));
-            }
-        }
-        Ok(None)
+        Ok(self.ap_table.selected_index()?)
     }
 
     fn sort_aps(&mut self) {
@@ -608,38 +642,6 @@ fn header_text(base: &str, key: SortKey, desc: bool, col: SortKey) -> String {
     } else {
         format!("{base} ↑")
     }
-}
-
-fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    if max_chars <= 1 {
-        return "…".to_string();
-    }
-    let mut out = String::new();
-    for ch in input.chars().take(max_chars - 1) {
-        out.push(ch);
-    }
-    out.push('…');
-    out
-}
-
-fn format_ap_row(ap: &AccessPointRecord) -> String {
-    let mode = truncate_chars(&ap.mode, 12);
-    let ssid = truncate_chars(&ap.ssid, 18);
-    let bssid = truncate_chars(&ap.bssid_text, 17);
-    format!(
-        "{:>3}%/{:>4}dBm | {:>3} | {:>6.1}M | {:<12} | {:<18} | {}{}",
-        ap.signal_quality,
-        ap.rssi_dbm,
-        ap.channel,
-        ap.rate_mbps,
-        mode,
-        ssid,
-        bssid,
-        if ap.connected { " [C]" } else { "" }
-    )
 }
 
 fn format_ap_detail(ap: &AccessPointRecord) -> String {

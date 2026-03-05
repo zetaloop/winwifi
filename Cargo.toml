@@ -6,13 +6,29 @@ edition = "2024"
 [dependencies]
 compio = { version = "=0.17.0", default-features = false, features = ["time"] }
 plotters = { version = "=0.3.7", default-features = false, features = ["line_series"] }
+send_wrapper = "=0.6.0"
 thiserror = "=2.0.17"
+windows-core = "=0.62.2"
 windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_WiFi",
     "Win32_Networking_WinSock",
 ] }
+winio-callback = "=0.1.2"
 winio = { version = "=0.10.0", default-features = false, features = ["plotters", "winui"] }
+winui3 = { version = "=0.3.8", package = "winio-winui3", features = [
+    "native",
+    "UI_Composition",
+    "UI_Composition_SystemBackdrops",
+    "UI_Dispatching",
+    "UI_Windowing",
+    "UI_Xaml_Controls_Primitives",
+    "UI_Xaml_Input",
+    "UI_Xaml_Interop",
+    "UI_Xaml_Markup",
+    "UI_Xaml_Media",
+    "UI_Xaml_XamlTypeInfo",
+] }
 
 [profile.release]
 lto = true
