@@ -154,11 +154,12 @@ impl ApTable {
                 } else {
                     TextAlignment::Left
                 };
-                let cell = make_cell(text, widths[idx], align)?;
-                MUXC::Canvas::SetLeft(&cell, col_left)?;
+                let col_width = widths[idx];
+                let cell = make_cell(text, col_width, align)?;
+                MUXC::Canvas::SetLeft(&cell, col_left + CELL_PADDING)?;
                 MUXC::Canvas::SetTop(&cell, 0.0)?;
                 row_canvas.Children()?.Append(&cell)?;
-                col_left += widths[idx];
+                col_left += col_width;
             }
 
             item.SetContent(&row_canvas)?;
@@ -185,9 +186,10 @@ impl ApTable {
 
 fn make_cell(text: &str, width: f64, align: TextAlignment) -> winio::Result<MUXC::TextBlock> {
     let cell = MUXC::TextBlock::new()?;
-    let display_text = truncate_chars(text, ((width - CELL_PADDING * 2.0) / 8.0) as usize);
+    let content_width = (width - CELL_PADDING * 2.0).max(1.0);
+    let display_text = truncate_chars(text, (content_width / 8.0) as usize);
     cell.SetText(&HSTRING::from(display_text))?;
-    cell.SetWidth(width)?;
+    cell.SetWidth(content_width)?;
     cell.SetHeight(ROW_HEIGHT)?;
     cell.SetTextAlignment(align)?;
     cell.SetTextWrapping(TextWrapping::NoWrap)?;
