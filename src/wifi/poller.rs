@@ -5,7 +5,7 @@ use crate::wifi::{
         bss_type_to_string, bssid_to_string, channel_from_frequency_khz, interface_state_to_string,
         phy_type_to_string, quality_to_rssi_dbm,
     },
-    native::{AvailableNetworkRaw, WifiResult, WlanClient},
+    native::{AvailableNetworkRaw, BssEntryRaw, WifiResult, WlanClient},
     types::{AccessPointRecord, WifiInterfaceSummary, WifiSnapshot},
 };
 
@@ -71,6 +71,7 @@ impl WifiPoller {
             }
             Err(err) => return Err(err),
         };
+        let bss_entries = dedupe_bss_entries(bss_entries);
         let connection = match self.client.get_current_connection(&selected_guid) {
             Ok(v) => v,
             Err(err) if err.is_access_denied() => {
@@ -189,4 +190,35 @@ fn build_available_map(networks: &[AvailableNetworkRaw]) -> HashMap<(String, i32
             });
     }
     map
+}
+
+fn dedupe_bss_entries(entries: Vec<BssEntryRaw>) -> Vec<BssEntryRaw> {
+    let mut map: HashMap<([u8; 6], String, i32, i32, u32), BssEntryRaw> =
+        HashMap::with_capacity(entries.len());
+    for entry in entries {
+        let key = (
+            entry.bssid,
+            entry.ssid.clone(),
+            entry.bss_type,
+            entry.phy_type,
+            entry.center_freq_khz,
+        );
+        map.entry(key)
+            .and_modify(|exist| {
+                if is_better_bss_entry(&entry, exist) {
+                    *exist = entry.clone();
+                }
+            })
+            .or_insert(entry);
+    }
+    map.into_values().collect()
+}
+
+fn is_better_bss_entry(candidate: &BssEntryRaw, current: &BssEntryRaw) -> bool {
+    candidate
+        .link_quality
+        .cmp(&current.link_quality)
+        .then_with(|| candidate.rssi.cmp(&current.rssi))
+        .then_with(|| candidate.max_rate_mbps.total_cmp(&current.max_rate_mbps))
+        .is_gt()
 }
