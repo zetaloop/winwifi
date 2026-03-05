@@ -245,8 +245,16 @@ impl Component for MainModel {
 
 impl MainModel {
     fn refresh_snapshot(&mut self) -> AppResult<()> {
-        let snapshot = self.poller.collect(self.selected_interface)?;
-        self.apply_snapshot(snapshot)?;
+        match self.poller.collect(self.selected_interface) {
+            Ok(snapshot) => {
+                self.apply_snapshot(snapshot)?;
+            }
+            Err(err) => {
+                self.status_label.set_text(format!("扫描失败: {err}"))?;
+                self.detail_box
+                    .set_text("扫描器遇到错误，请确认 WLAN 服务与无线网卡状态。")?;
+            }
+        }
         Ok(())
     }
 

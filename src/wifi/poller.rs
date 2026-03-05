@@ -47,9 +47,12 @@ impl WifiPoller {
         let mut permission_denied = false;
         if self.tick_count.is_multiple_of(2)
             && let Err(err) = self.client.trigger_scan(&selected_guid)
-            && err.is_access_denied()
         {
-            permission_denied = true;
+            if err.is_access_denied() {
+                permission_denied = true;
+            } else {
+                return Err(err);
+            }
         }
 
         let available = match self.client.get_available_networks(&selected_guid) {
