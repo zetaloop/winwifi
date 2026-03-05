@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-compio = { version = "0.18.0", default-features = false, features = ["time"] }
+compio = { version = "=0.17.0", default-features = false, features = ["time"] }
 plotters = { version = "=0.3.7", default-features = false, features = ["line_series"] }
 thiserror = "=2.0.17"
 windows-sys = { version = "=0.61.2", features = [
