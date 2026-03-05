@@ -3,6 +3,8 @@ use std::convert::Infallible;
 use thiserror::Error;
 use winio::prelude::*;
 
+use crate::wifi::native::WifiError;
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("UI error: {0}")]
@@ -11,6 +13,8 @@ pub enum AppError {
     Layout(#[from] TaffyError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("WiFi error: {0}")]
+    Wifi(#[from] WifiError),
 }
 
 impl<E: Into<AppError> + std::fmt::Display> From<LayoutError<E>> for AppError {
