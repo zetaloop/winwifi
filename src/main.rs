@@ -38,13 +38,14 @@ enum SortKey {
 }
 
 const HEADER_COLUMNS: [(SortKey, f64); 6] = [
-    (SortKey::Signal, 0.17),
-    (SortKey::Channel, 0.09),
-    (SortKey::Rate, 0.11),
+    (SortKey::Signal, 0.24),
+    (SortKey::Channel, 0.10),
+    (SortKey::Rate, 0.14),
     (SortKey::Mode, 0.18),
-    (SortKey::Ssid, 0.24),
-    (SortKey::Bssid, 0.21),
+    (SortKey::Ssid, 0.18),
+    (SortKey::Bssid, 0.16),
 ];
+const MIN_COLUMN_WIDTHS: [f64; 6] = [160.0, 84.0, 104.0, 150.0, 160.0, 190.0];
 
 fn run() -> AppResult<()> {
     App::new("dev.foxloop.winwifi")?.run_until_event::<MainModel>(())
@@ -288,7 +289,7 @@ impl Component for MainModel {
     fn render(&mut self, _sender: &ComponentSender<Self>) -> AppResult<()> {
         let csize = self.window.client_size()?;
         let top_height = 40.0;
-        let left_width = 560.0;
+        let left_width = (csize.width * 0.62).clamp(620.0, (csize.width - 260.0).max(620.0));
         let header_height = 30.0;
         let chart_height = 280.0;
         let margin = 10.0;
@@ -312,17 +313,9 @@ impl Component for MainModel {
         let list_h = (csize.height - top_height - 2.0 * margin - header_height).max(120.0);
 
         let mut col_x = left_x;
-        let mut column_widths = [0.0; 6];
-        for (idx, ((_, ratio), header)) in HEADER_COLUMNS
-            .iter()
-            .zip(self.header_buttons_mut())
-            .enumerate()
-        {
-            let mut col_w = left_w * ratio;
-            if col_x + col_w > left_x + left_w {
-                col_w = left_x + left_w - col_x;
-            }
-            column_widths[idx] = col_w;
+        let column_widths = compute_column_widths(left_w);
+        for (idx, header) in self.header_buttons_mut().into_iter().enumerate() {
+            let col_w = column_widths[idx];
             header.set_rect(Rect::new(
                 Point::new(col_x, left_y),
                 Size::new(col_w, header_height),
@@ -642,6 +635,27 @@ fn header_text(base: &str, key: SortKey, desc: bool, col: SortKey) -> String {
     } else {
         format!("{base} ↑")
     }
+}
+
+fn compute_column_widths(total_width: f64) -> [f64; 6] {
+    let min_sum = MIN_COLUMN_WIDTHS.iter().sum::<f64>();
+    if total_width <= min_sum {
+        let scale = (total_width / min_sum).max(0.0);
+        let mut widths = MIN_COLUMN_WIDTHS.map(|v| (v * scale).max(52.0));
+        let used = widths.iter().sum::<f64>();
+        widths[5] += total_width - used;
+        return widths;
+    }
+
+    let extra = total_width - min_sum;
+    let ratio_sum = HEADER_COLUMNS.iter().map(|(_, ratio)| *ratio).sum::<f64>();
+    let mut widths = [0.0; 6];
+    for (idx, (_, ratio)) in HEADER_COLUMNS.iter().enumerate() {
+        widths[idx] = MIN_COLUMN_WIDTHS[idx] + extra * (*ratio / ratio_sum);
+    }
+    let used = widths.iter().sum::<f64>();
+    widths[5] += total_width - used;
+    widths
 }
 
 fn format_ap_detail(ap: &AccessPointRecord) -> String {

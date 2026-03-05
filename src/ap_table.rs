@@ -11,7 +11,7 @@ use winui3::Microsoft::UI::Xaml::{
 
 const CELL_PADDING: f64 = 8.0;
 const MIN_COL_WIDTH: f64 = 48.0;
-const ROW_HEIGHT: f64 = 30.0;
+const ROW_HEIGHT: f64 = 32.0;
 
 #[derive(Debug, Clone)]
 pub struct ApTableRow {
@@ -187,7 +187,7 @@ impl ApTable {
 fn make_cell(text: &str, width: f64, align: TextAlignment) -> winio::Result<MUXC::TextBlock> {
     let cell = MUXC::TextBlock::new()?;
     let content_width = (width - CELL_PADDING * 2.0).max(1.0);
-    let display_text = truncate_chars(text, (content_width / 8.0) as usize);
+    let display_text = truncate_chars(text, (content_width / 7.0) as usize);
     cell.SetText(&HSTRING::from(display_text))?;
     cell.SetWidth(content_width)?;
     cell.SetHeight(ROW_HEIGHT)?;
