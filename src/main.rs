@@ -36,12 +36,12 @@ enum SortKey {
 }
 
 const HEADER_COLUMNS: [(SortKey, f64); 6] = [
-    (SortKey::Signal, 0.13),
-    (SortKey::Channel, 0.10),
+    (SortKey::Signal, 0.17),
+    (SortKey::Channel, 0.09),
     (SortKey::Rate, 0.11),
     (SortKey::Mode, 0.18),
-    (SortKey::Ssid, 0.25),
-    (SortKey::Bssid, 0.23),
+    (SortKey::Ssid, 0.24),
+    (SortKey::Bssid, 0.21),
 ];
 
 fn run() -> AppResult<()> {
@@ -486,13 +486,13 @@ impl MainModel {
 
     fn update_sort_headers(&mut self) -> AppResult<()> {
         self.header_signal.set_text(header_text(
-            "SIGNAL",
+            "SIG",
             self.sort_key,
             self.sort_desc,
             SortKey::Signal,
         ))?;
         self.header_chan.set_text(header_text(
-            "CHAN",
+            "CH",
             self.sort_key,
             self.sort_desc,
             SortKey::Channel,
@@ -626,11 +626,11 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 }
 
 fn format_ap_row(ap: &AccessPointRecord) -> String {
-    let mode = truncate_chars(&ap.mode, 10);
+    let mode = truncate_chars(&ap.mode, 12);
     let ssid = truncate_chars(&ap.ssid, 18);
     let bssid = truncate_chars(&ap.bssid_text, 17);
     format!(
-        "{}% {:>4}dBm | CH {:>3} | {:>6.1}M | {:<10} | {:<18} | {}{}",
+        "{:>3}%/{:>4}dBm | {:>3} | {:>6.1}M | {:<12} | {:<18} | {}{}",
         ap.signal_quality,
         ap.rssi_dbm,
         ap.channel,
